@@ -1,88 +1,907 @@
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مواعيد — حجز طاولات المطاعم</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Aref+Ruqaa:wght@400;700&family=Tajawal:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cream:#F6EEDE;
+    --paper:#FFFBF2;
+    --ink:#2C1B12;
+    --brown:#3E2417;
+    --brown-2:#5B3A26;
+    --gold:#C79A45;
+    --gold-deep:#A87C2E;
+    --wine:#6E1E2E;
+    --wine-2:#8A2C3E;
+    --green:#3F6B4A;
+    --line:#E3D5B8;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--cream);
+    color:var(--ink);
+    font-family:'Tajawal',sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.display{
+    font-family:'Aref Ruqaa',serif;
+    color:var(--brown);
+    margin:0;
+  }
+  .app{
+    max-width:480px;
+    margin:0 auto;
+    min-height:100vh;
+    background:var(--paper);
+    position:relative;
+    box-shadow:0 0 40px rgba(62,36,23,0.12);
+    display:flex;
+    flex-direction:column;
+  }
+  header.top{
+    background:var(--brown);
+    color:var(--cream);
+    padding:22px 20px 18px;
+    position:relative;
+    overflow:hidden;
+  }
+  header.top::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:radial-gradient(circle at 85% -20%, rgba(199,154,69,0.35), transparent 55%);
+  }
+  header.top .brand{
+    display:flex;
+    align-items:baseline;
+    gap:8px;
+    position:relative;
+  }
+  header.top .brand h1{
+    color:var(--cream);
+    font-size:28px;
+  }
+  header.top .brand span{
+    color:var(--gold);
+    font-size:12px;
+    letter-spacing:0.02em;
+  }
+  header.top .tag{
+    color:#D9C6A3;
+    font-size:13px;
+    margin-top:4px;
+    position:relative;
+  }
 
--- 1. جدول أسعار المنصة المركزية
-CREATE TABLE pricing_settings (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  founding_price INTEGER NOT NULL DEFAULT 60000, -- 60,000 د.ع
-  standard_price INTEGER NOT NULL DEFAULT 85000, -- 85,000 د.ع
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  nav.roles{
+    display:flex;
+    background:var(--brown-2);
+    position:relative;
+  }
+  nav.roles button{
+    flex:1;
+    background:none;
+    border:none;
+    color:#E6D7BC;
+    font-family:'Tajawal',sans-serif;
+    font-weight:500;
+    font-size:13.5px;
+    padding:12px 4px;
+    cursor:pointer;
+    border-bottom:3px solid transparent;
+    transition:color .15s, border-color .15s;
+  }
+  nav.roles button.active{
+    color:var(--gold);
+    border-bottom-color:var(--gold);
+  }
 
--- أدخل الأسعار الافتراضية
-INSERT INTO pricing_settings (founding_price, standard_price) VALUES (60000, 85000);
+  main{
+    flex:1;
+    padding:18px 18px 90px;
+  }
+  .view{display:none;}
+  .view.active{display:block;}
 
--- 2. جدول المطاعم
-CREATE TYPE restaurant_tier AS ENUM ('founding', 'standard');
+  .card{
+    background:var(--paper);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:16px;
+    margin-bottom:14px;
+  }
+  .card + .card{margin-top:0;}
 
-CREATE TABLE restaurants (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT NOT NULL,
-  tier restaurant_tier NOT NULL DEFAULT 'standard',
-  phone TEXT NOT NULL,
-  is_active BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  .section-title{
+    font-size:20px;
+    margin-bottom:10px;
+  }
+  .muted{color:#7A6A57;font-size:13px;}
 
--- 3. جدول حسابات أصحاب المطاعم
-CREATE TABLE restaurant_users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE, -- مربوط بـ Supabase Auth
-  email TEXT UNIQUE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  label{
+    display:block;
+    font-size:13px;
+    color:var(--brown-2);
+    margin:12px 0 6px;
+    font-weight:500;
+  }
+  input[type=text], input[type=tel], input[type=date], input[type=time], input[type=number], select{
+    width:100%;
+    padding:11px 12px;
+    border:1.5px solid var(--line);
+    border-radius:10px;
+    font-family:'Tajawal',sans-serif;
+    font-size:15px;
+    background:#fff;
+    color:var(--ink);
+  }
+  input:focus, select:focus{
+    outline:none;
+    border-color:var(--gold-deep);
+  }
 
--- 4. جدول الزبائن (تسجيل إجباري برقم الهاتف)
-CREATE TABLE customer_users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  phone TEXT UNIQUE NOT NULL,
-  name TEXT NOT NULL,
-  phone_verified BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  .btn{
+    display:inline-block;
+    width:100%;
+    text-align:center;
+    padding:12px 16px;
+    border-radius:10px;
+    border:none;
+    font-family:'Tajawal',sans-serif;
+    font-weight:700;
+    font-size:15px;
+    cursor:pointer;
+    margin-top:14px;
+    transition:transform .08s, opacity .15s;
+  }
+  .btn:active{transform:scale(0.98);}
+  .btn-primary{background:var(--wine);color:#fff;}
+  .btn-primary:hover{background:var(--wine-2);}
+  .btn-gold{background:var(--gold);color:var(--brown);}
+  .btn-ghost{background:none;border:1.5px solid var(--line);color:var(--brown-2);}
+  .btn-small{width:auto;padding:8px 14px;font-size:13px;margin-top:0;}
+  .btn-danger{background:#fff;color:var(--wine);border:1.5px solid var(--wine);}
 
--- 5. سجل موثوقية الزبون
-CREATE TABLE customer_reliability (
-  customer_id UUID PRIMARY KEY REFERENCES customer_users(id) ON DELETE CASCADE,
-  total_bookings INTEGER DEFAULT 0,
-  total_noshows INTEGER DEFAULT 0,
-  is_restricted BOOLEAN DEFAULT FALSE,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  .rest-item{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:12px 4px;
+    border-bottom:1px solid var(--line);
+    cursor:pointer;
+  }
+  .rest-item:last-child{border-bottom:none;}
+  .rest-item h3{font-size:17px;color:var(--ink);font-family:'Tajawal';font-weight:700;}
+  .badge{
+    font-size:11px;
+    padding:3px 9px;
+    border-radius:20px;
+    font-weight:700;
+    white-space:nowrap;
+  }
+  .badge-founding{background:#F2E2B8;color:var(--gold-deep);}
+  .badge-standard{background:#EDE6D6;color:var(--brown-2);}
+  .badge-pending{background:#FBEBD0;color:#8A5A00;}
+  .badge-confirmed{background:#DFEAE1;color:var(--green);}
+  .badge-noshow{background:#F5DEE1;color:var(--wine);}
+  .badge-cancelled{background:#E9E9E9;color:#777;}
 
--- 6. جدول الحجوزات
-CREATE TYPE booking_status AS ENUM ('pending', 'confirmed', 'noshow', 'cancelled');
+  .stat-grid{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:10px;
+    margin-bottom:16px;
+  }
+  .stat{
+    background:var(--brown);
+    color:var(--cream);
+    border-radius:12px;
+    padding:14px 8px;
+    text-align:center;
+  }
+  .stat .num{font-size:24px;font-weight:900;color:var(--gold);display:block;}
+  .stat .lbl{font-size:11.5px;color:#D9C6A3;margin-top:2px;}
 
-CREATE TABLE bookings (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  code TEXT UNIQUE NOT NULL, -- مثلاً "B-4821"
-  restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
-  customer_id UUID REFERENCES customer_users(id) ON DELETE CASCADE,
-  booking_date DATE NOT NULL,
-  booking_time TIME NOT NULL,
-  party_size INTEGER NOT NULL CHECK (party_size > 0),
-  status booking_status DEFAULT 'pending',
-  reminder_sent_at TIMESTAMP WITH TIME ZONE,
-  confirmed_at TIMESTAMP WITH TIME ZONE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+  .booking-row{
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:12px 14px;
+    margin-bottom:10px;
+  }
+  .booking-row .top-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+  }
+  .booking-row .code{font-weight:900;color:var(--brown);font-size:15px;}
+  .booking-row .meta{font-size:13px;color:#7A6A57;margin-top:3px;line-height:1.6;}
+  .booking-row .actions{display:flex;gap:8px;margin-top:10px;}
 
--- -------------------------------------------------------
--- تفعيل عزل البيانات والمحافظة على أمان المنصة (Row Level Security)
--- -------------------------------------------------------
-ALTER TABLE restaurants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE restaurant_users ENABLE ROW LEVEL SECURITY;
+  .otp-boxes{
+    display:flex;
+    gap:8px;
+    justify-content:center;
+    margin:16px 0;
+    direction:ltr;
+  }
+  .otp-boxes input{
+    width:42px;
+    height:50px;
+    text-align:center;
+    font-size:20px;
+    font-weight:700;
+    padding:0;
+  }
 
--- الزبون يشاهد المطاعم النشطة فقط
-CREATE POLICY "Public Active Restaurants" ON restaurants 
-  FOR SELECT USING (is_active = true);
+  .toast{
+    position:fixed;
+    bottom:20px;
+    left:50%;
+    transform:translateX(-50%);
+    background:var(--brown);
+    color:var(--cream);
+    padding:12px 22px;
+    border-radius:30px;
+    font-size:13.5px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.25);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .25s, bottom .25s;
+    z-index:50;
+    max-width:90%;
+    text-align:center;
+  }
+  .toast.show{opacity:1;bottom:36px;}
 
--- صاحب المطعم يشاهد ويعدّل حجوزات مطعمه فقط حصراً
-CREATE POLICY "Restaurant Owner Access Bookings" ON bookings
-  FOR ALL USING (
-    restaurant_id IN (
-      SELECT restaurant_id FROM restaurant_users WHERE user_id = auth.uid()
-    )
-  );
+  .whatsapp-note{
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+    background:#EAF3EC;
+    border:1px solid #CFE3D4;
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:12.5px;
+    color:#2E5B3B;
+    margin-top:10px;
+  }
+
+  .empty{
+    text-align:center;
+    padding:30px 10px;
+    color:#9A8A75;
+  }
+
+  .divider{
+    height:1px;
+    background:var(--line);
+    margin:16px 0;
+  }
+
+  .pill-toggle{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+  }
+  .pill-toggle button{
+    border:1.5px solid var(--line);
+    background:#fff;
+    padding:8px 14px;
+    border-radius:20px;
+    font-size:13px;
+    cursor:pointer;
+    color:var(--brown-2);
+  }
+  .pill-toggle button.sel{
+    background:var(--wine);
+    color:#fff;
+    border-color:var(--wine);
+  }
+
+  .kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--line);font-size:14px;}
+  .kv:last-child{border-bottom:none;}
+  .kv b{color:var(--brown);}
+
+  .restrict-flag{
+    background:#F5DEE1;
+    color:var(--wine);
+    border-radius:8px;
+    padding:8px 10px;
+    font-size:12.5px;
+    margin-top:8px;
+  }
+
+  table.admin-table{width:100%;border-collapse:collapse;font-size:13px;}
+  table.admin-table th{
+    text-align:right;
+    color:var(--brown-2);
+    font-weight:700;
+    padding:6px 4px;
+    border-bottom:2px solid var(--line);
+    font-size:12px;
+  }
+  table.admin-table td{
+    padding:8px 4px;
+    border-bottom:1px solid var(--line);
+    vertical-align:middle;
+  }
+
+  .switch{
+    position:relative;
+    width:40px;height:22px;
+    display:inline-block;
+  }
+  .switch input{display:none;}
+  .switch .slider{
+    position:absolute;inset:0;
+    background:#D9CBB0;
+    border-radius:30px;
+    cursor:pointer;
+    transition:background .15s;
+  }
+  .switch .slider::before{
+    content:"";
+    position:absolute;
+    width:16px;height:16px;
+    left:3px;top:3px;
+    background:#fff;
+    border-radius:50%;
+    transition:transform .15s;
+  }
+  .switch input:checked + .slider{background:var(--green);}
+  .switch input:checked + .slider::before{transform:translateX(-18px);}
+
+  ::placeholder{color:#B8A98D;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="top">
+    <div class="brand"><h1>مواعيد</h1><span>الموصل</span></div>
+    <div class="tag">نسخة تجريبية — منصة حجز طاولات المطاعم</div>
+  </header>
+
+  <nav class="roles">
+    <button class="active" data-role="customer" onclick="switchRole('customer')">👤 الزبون</button>
+    <button data-role="owner" onclick="switchRole('owner')">🍽️ صاحب المطعم</button>
+    <button data-role="admin" onclick="switchRole('admin')">🛠️ المؤسس</button>
+  </nav>
+
+  <main>
+
+    <!-- ================= CUSTOMER VIEW ================= -->
+    <section class="view active" id="view-customer">
+
+      <!-- Step: phone entry -->
+      <div id="cust-step-phone">
+        <div class="card">
+          <h2 class="section-title">تسجيل الدخول برقم الهاتف</h2>
+          <p class="muted">ندخل رقمك عشان نربط حجوزاتك كلها بحساب واحد ونرسلك تذكير قبل موعدك.</p>
+          <label>رقم الهاتف</label>
+          <input type="tel" id="cust-phone-input" placeholder="07xx xxx xxxx" dir="ltr">
+          <button class="btn btn-primary" onclick="sendOTP()">إرسال رمز التحقق</button>
+        </div>
+      </div>
+
+      <!-- Step: OTP -->
+      <div id="cust-step-otp" style="display:none">
+        <div class="card">
+          <h2 class="section-title">أدخل رمز التحقق</h2>
+          <p class="muted" id="otp-sent-to"></p>
+          <div class="otp-boxes">
+            <input maxlength="1" class="otp-d">
+            <input maxlength="1" class="otp-d">
+            <input maxlength="1" class="otp-d">
+            <input maxlength="1" class="otp-d">
+          </div>
+          <p class="muted" style="text-align:center">وصلك الرمز فعليًا عبر واتساب — لغرض التجربة هذا: <b id="otp-hint" style="color:var(--wine)"></b></p>
+          <button class="btn btn-primary" onclick="verifyOTP()">تأكيد الرمز</button>
+          <button class="btn btn-ghost" onclick="showStep('cust-step-phone')">تغيير الرقم</button>
+        </div>
+      </div>
+
+      <!-- Step: name (first time only) -->
+      <div id="cust-step-name" style="display:none">
+        <div class="card">
+          <h2 class="section-title">مرحبًا بك لأول مرة</h2>
+          <p class="muted">شو اسمك؟ راح نستخدمه بكل حجوزاتك القادمة تلقائيًا.</p>
+          <label>الاسم الكامل</label>
+          <input type="text" id="cust-name-input" placeholder="مثال: أحمد محمود">
+          <button class="btn btn-primary" onclick="saveCustomerName()">متابعة</button>
+        </div>
+      </div>
+
+      <!-- Step: main (restaurant list + bookings) -->
+      <div id="cust-step-main" style="display:none">
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div class="muted">مرحبًا،</div>
+            <h3 id="cust-welcome-name" style="font-family:'Tajawal';font-weight:900;font-size:17px;color:var(--brown)"></h3>
+          </div>
+          <button class="btn btn-ghost btn-small" onclick="customerLogout()">خروج</button>
+        </div>
+
+        <div id="cust-restriction-box"></div>
+
+        <div class="card">
+          <h2 class="section-title">اختر مطعم</h2>
+          <div id="cust-rest-list"></div>
+        </div>
+
+        <div class="card">
+          <h2 class="section-title">حجوزاتي</h2>
+          <div id="cust-my-bookings"></div>
+        </div>
+      </div>
+
+      <!-- Step: booking form -->
+      <div id="cust-step-book" style="display:none">
+        <div class="card">
+          <h2 class="section-title">حجز طاولة — <span id="book-rest-name" style="color:var(--wine)"></span></h2>
+          <label>التاريخ</label>
+          <input type="date" id="book-date">
+          <label>الوقت</label>
+          <input type="time" id="book-time">
+          <label>عدد الأشخاص</label>
+          <input type="number" id="book-party" min="1" max="30" value="2">
+          <div id="book-large-warning" style="display:none" class="restrict-flag" style="background:#FBEBD0;color:#8A5A00">
+            الحجوزات لـ 6 أشخاص فأكثر تحتاج تأكيد هاتفي يدوي من طاقم المطعم.
+          </div>
+          <button class="btn btn-primary" onclick="confirmBooking()">تأكيد الحجز</button>
+          <button class="btn btn-ghost" onclick="showStep('cust-step-main')">رجوع</button>
+        </div>
+      </div>
+
+      <!-- Step: booking success -->
+      <div id="cust-step-success" style="display:none">
+        <div class="card" style="text-align:center">
+          <h2 class="section-title">تم الحجز ✓</h2>
+          <p class="muted">كود الحجز الخاص بك</p>
+          <div class="display" style="font-size:36px;letter-spacing:2px;color:var(--wine);margin:8px 0" id="success-code"></div>
+          <div class="whatsapp-note">
+            <span>💬</span>
+            <span>راح توصلك رسالة واتساب تذكيرية قبل موعدك بساعة وحدة فيها زر لتأكيد حضورك. إذا ما تأكدت خلال 10-15 دقيقة من وقت الحجز، الطاولة تتحرر تلقائيًا.</span>
+          </div>
+          <button class="btn btn-primary" onclick="showStep('cust-step-main'); renderCustomerHome();">تمام</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================= OWNER VIEW ================= -->
+    <section class="view" id="view-owner">
+
+      <div id="owner-step-login">
+        <div class="card">
+          <h2 class="section-title">دخول صاحب المطعم</h2>
+          <p class="muted">اختر مطعمك لعرض لوحة التحكم (بيانات كل مطعم معزولة تمامًا عن غيره).</p>
+          <label>المطعم</label>
+          <select id="owner-select-rest"></select>
+          <label>كلمة المرور</label>
+          <input type="text" id="owner-pass" placeholder="أي قيمة — تجربة" value="demo123">
+          <button class="btn btn-primary" onclick="ownerLogin()">دخول</button>
+        </div>
+      </div>
+
+      <div id="owner-step-dash" style="display:none">
+        <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
+          <h3 id="owner-rest-name" style="font-family:'Tajawal';font-weight:900;font-size:18px;color:var(--brown)"></h3>
+          <button class="btn btn-ghost btn-small" onclick="ownerLogout()">خروج</button>
+        </div>
+
+        <div class="stat-grid" id="owner-stats"></div>
+
+        <div class="card">
+          <h2 class="section-title">الحجوزات القادمة</h2>
+          <div id="owner-bookings"></div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================= ADMIN VIEW ================= -->
+    <section class="view" id="view-admin">
+
+      <div class="card">
+        <h2 class="section-title">نظرة عامة على المنصة</h2>
+        <div class="stat-grid" id="admin-stats"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">إدارة المطاعم</h2>
+        <table class="admin-table" id="admin-rest-table"></table>
+        <div class="divider"></div>
+        <h3 style="font-family:'Tajawal';font-size:15px;font-weight:700;color:var(--brown-2);margin-bottom:8px;">إضافة مطعم جديد</h3>
+        <label>اسم المطعم</label>
+        <input type="text" id="admin-new-name" placeholder="مثال: مطعم دجلة">
+        <label>رقم التواصل</label>
+        <input type="tel" id="admin-new-phone" placeholder="07xx xxx xxxx" dir="ltr">
+        <label>الفئة</label>
+        <div class="pill-toggle" id="admin-new-tier">
+          <button class="sel" onclick="pickNewTier('founding',this)">مؤسِّس</button>
+          <button onclick="pickNewTier('standard',this)">عادي</button>
+        </div>
+        <button class="btn btn-gold" onclick="addRestaurant()">إضافة المطعم</button>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">التسعير المركزي</h2>
+        <p class="muted">أي تعديل هنا ينعكس تلقائيًا على كل المطاعم حسب فئتها.</p>
+        <label>سعر فئة المؤسِّسين (دينار عراقي / شهريًا)</label>
+        <input type="number" id="price-founding">
+        <label>سعر الفئة العادية (دينار عراقي / شهريًا)</label>
+        <input type="number" id="price-standard">
+        <button class="btn btn-primary" onclick="savePricing()">حفظ الأسعار</button>
+      </div>
+
+      <div class="card">
+        <h2 class="section-title">سجل موثوقية الزبائن</h2>
+        <table class="admin-table" id="admin-reliability-table"></table>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   بيانات تجريبية داخل الذاكرة (In-memory demo data — لا تُحفظ)
+   ============================================================ */
+let restaurants = [
+  {id:'r1', name:'مطعم دجلة الذهبي', tier:'founding', phone:'0770 111 2222', active:true},
+  {id:'r2', name:'بيت الموصل للمأكولات', tier:'founding', phone:'0771 222 3333', active:true},
+  {id:'r3', name:'ليالي نينوى', tier:'standard', phone:'0772 333 4444', active:true},
+];
+
+let customers = {}; // phone -> {name, phone, bookingsCount, noshowCount, restricted}
+let bookings = [];  // {id, code, restaurantId, customerPhone, date, time, party, status, needsManualCall}
+let pricing = {founding: 60000, standard: 80000};
+
+let bookingCounter = 4800;
+
+/* session state */
+let session = {custPhone:null, pendingPhone:null, pendingOTP:null, ownerRestId:null, bookingTargetRestId:null};
+
+/* ============================================================
+   أدوات عامة
+   ============================================================ */
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>t.classList.remove('show'), 2600);
+}
+
+function switchRole(role){
+  document.querySelectorAll('nav.roles button').forEach(b=>b.classList.toggle('active', b.dataset.role===role));
+  document.querySelectorAll('main .view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+role).classList.add('active');
+  if(role==='owner') populateOwnerSelect();
+  if(role==='admin') renderAdmin();
+}
+
+function showStep(id){
+  ['cust-step-phone','cust-step-otp','cust-step-name','cust-step-main','cust-step-book','cust-step-success']
+    .forEach(s=>document.getElementById(s).style.display = (s===id?'block':'none'));
+}
+
+function fmtDate(d){
+  const dt = new Date(d+'T00:00:00');
+  return dt.toLocaleDateString('ar-IQ',{weekday:'long', day:'numeric', month:'long'});
+}
+
+/* ============================================================
+   واجهة الزبون
+   ============================================================ */
+document.querySelectorAll('.otp-d').forEach((inp,idx,arr)=>{
+  inp.addEventListener('input', ()=>{
+    if(inp.value && idx<arr.length-1) arr[idx+1].focus();
+  });
+});
+
+function sendOTP(){
+  const phone = document.getElementById('cust-phone-input').value.trim();
+  if(phone.length < 8){ toast('أدخل رقم هاتف صحيح'); return; }
+  session.pendingPhone = phone;
+  session.pendingOTP = String(Math.floor(1000 + Math.random()*9000));
+  document.getElementById('otp-sent-to').textContent = 'أرسلنا رمز التحقق إلى ' + phone;
+  document.getElementById('otp-hint').textContent = session.pendingOTP;
+  document.querySelectorAll('.otp-d').forEach(i=>i.value='');
+  showStep('cust-step-otp');
+}
+
+function verifyOTP(){
+  const entered = Array.from(document.querySelectorAll('.otp-d')).map(i=>i.value).join('');
+  if(entered.length<4){ toast('أدخل الرمز كاملًا'); return; }
+  if(entered !== session.pendingOTP){ toast('رمز غير صحيح، حاول مرة أخرى'); return; }
+
+  const phone = session.pendingPhone;
+  session.custPhone = phone;
+
+  if(!customers[phone]){
+    showStep('cust-step-name');
+  } else {
+    showStep('cust-step-main');
+    renderCustomerHome();
+  }
+}
+
+function saveCustomerName(){
+  const name = document.getElementById('cust-name-input').value.trim();
+  if(!name){ toast('أدخل الاسم'); return; }
+  customers[session.custPhone] = {name, phone:session.custPhone, bookingsCount:0, noshowCount:0, restricted:false};
+  toast('تم إنشاء حسابك بنجاح');
+  showStep('cust-step-main');
+  renderCustomerHome();
+}
+
+function customerLogout(){
+  session.custPhone = null;
+  document.getElementById('cust-phone-input').value='';
+  showStep('cust-step-phone');
+}
+
+function renderCustomerHome(){
+  const c = customers[session.custPhone];
+  document.getElementById('cust-welcome-name').textContent = c.name;
+
+  const box = document.getElementById('cust-restriction-box');
+  box.innerHTML = c.restricted
+    ? `<div class="card restrict-flag">⚠️ حسابك مقيّد مؤقتًا بسبب تكرار عدم الحضور (${c.noshowCount} مرات). يرجى التواصل مع المطعم مباشرة لإتمام الحجز.</div>`
+    : (c.noshowCount>=2 ? `<div class="card restrict-flag">تنبيه: لديك ${c.noshowCount} حالة عدم حضور سابقة. حالة إضافية قد تؤدي لتقييد حسابك.</div>` : '');
+
+  const list = document.getElementById('cust-rest-list');
+  list.innerHTML = restaurants.filter(r=>r.active).map(r=>`
+    <div class="rest-item" onclick="openBooking('${r.id}')">
+      <h3>${r.name}</h3>
+      <span class="badge ${r.tier==='founding'?'badge-founding':'badge-standard'}">${r.tier==='founding'?'مطعم مؤسِّس':'مطعم شريك'}</span>
+    </div>
+  `).join('') || '<div class="empty">لا توجد مطاعم متاحة حاليًا</div>';
+
+  const mine = bookings.filter(b=>b.customerPhone===session.custPhone).sort((a,b)=> (a.date+a.time < b.date+b.time ? 1:-1));
+  const bl = document.getElementById('cust-my-bookings');
+  bl.innerHTML = mine.length ? mine.map(b=>{
+    const r = restaurants.find(x=>x.id===b.restaurantId);
+    return bookingRowHTML(b, r.name, false);
+  }).join('') : '<div class="empty">ما عندك حجوزات بعد</div>';
+}
+
+function openBooking(restId){
+  if(customers[session.custPhone].restricted){ toast('حسابك مقيّد — تواصل مع المطعم مباشرة'); return; }
+  session.bookingTargetRestId = restId;
+  const r = restaurants.find(x=>x.id===restId);
+  document.getElementById('book-rest-name').textContent = r.name;
+  document.getElementById('book-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('book-time').value = '19:00';
+  document.getElementById('book-party').value = 2;
+  document.getElementById('book-large-warning').style.display='none';
+  showStep('cust-step-book');
+}
+
+document.getElementById('book-party').addEventListener('input', ()=>{
+  const v = parseInt(document.getElementById('book-party').value||0);
+  document.getElementById('book-large-warning').style.display = v>=6 ? 'block' : 'none';
+});
+
+function confirmBooking(){
+  const date = document.getElementById('book-date').value;
+  const time = document.getElementById('book-time').value;
+  const party = parseInt(document.getElementById('book-party').value||0);
+  if(!date || !time || !party){ toast('أكمل كل الحقول'); return; }
+
+  bookingCounter++;
+  const code = 'B'+bookingCounter;
+  const b = {
+    id:'bk'+bookingCounter,
+    code,
+    restaurantId: session.bookingTargetRestId,
+    customerPhone: session.custPhone,
+    date, time, party,
+    status:'pending',
+    needsManualCall: party>=6,
+  };
+  bookings.push(b);
+  customers[session.custPhone].bookingsCount++;
+
+  document.getElementById('success-code').textContent = code;
+  showStep('cust-step-success');
+}
+
+function bookingRowHTML(b, restName, ownerMode){
+  const badgeClass = {pending:'badge-pending',confirmed:'badge-confirmed',noshow:'badge-noshow',cancelled:'badge-cancelled'}[b.status];
+  const badgeText = {pending:'بانتظار التأكيد',confirmed:'مؤكد',noshow:'لم يحضر',cancelled:'ملغى'}[b.status];
+  let actions = '';
+  if(ownerMode && b.status==='pending'){
+    actions = `<div class="actions">
+      <button class="btn btn-primary btn-small" onclick="ownerSetStatus('${b.id}','confirmed')">تأكيد الحضور</button>
+      <button class="btn btn-danger btn-small" onclick="ownerSetStatus('${b.id}','noshow')">لم يحضر</button>
+    </div>`;
+  }
+  const callFlag = b.needsManualCall ? `<div class="muted" style="color:var(--wine-2);margin-top:4px;">📞 يتطلب تأكيد هاتفي يدوي (حجز ${b.party} أشخاص)</div>` : '';
+  return `<div class="booking-row">
+    <div class="top-row">
+      <div>
+        <div class="code">${b.code}</div>
+        <div class="meta">${restName ? restName+' — ' : ''}${fmtDate(b.date)} · ${b.time} · ${b.party} أشخاص</div>
+      </div>
+      <span class="badge ${badgeClass}">${badgeText}</span>
+    </div>
+    ${callFlag}
+    ${actions}
+  </div>`;
+}
+
+/* ============================================================
+   واجهة صاحب المطعم
+   ============================================================ */
+function populateOwnerSelect(){
+  const sel = document.getElementById('owner-select-rest');
+  sel.innerHTML = restaurants.map(r=>`<option value="${r.id}">${r.name}</option>`).join('');
+}
+
+function ownerLogin(){
+  session.ownerRestId = document.getElementById('owner-select-rest').value;
+  document.getElementById('owner-step-login').style.display='none';
+  document.getElementById('owner-step-dash').style.display='block';
+  renderOwnerDash();
+}
+
+function ownerLogout(){
+  session.ownerRestId = null;
+  document.getElementById('owner-step-login').style.display='block';
+  document.getElementById('owner-step-dash').style.display='none';
+}
+
+function renderOwnerDash(){
+  const r = restaurants.find(x=>x.id===session.ownerRestId);
+  document.getElementById('owner-rest-name').textContent = r.name;
+
+  const mine = bookings.filter(b=>b.restaurantId===r.id);
+  const total = mine.length;
+  const confirmed = mine.filter(b=>b.status==='confirmed').length;
+  const noshow = mine.filter(b=>b.status==='noshow').length;
+
+  document.getElementById('owner-stats').innerHTML = `
+    <div class="stat"><span class="num">${total}</span><span class="lbl">إجمالي الحجوزات</span></div>
+    <div class="stat"><span class="num">${confirmed}</span><span class="lbl">مؤكدة</span></div>
+    <div class="stat"><span class="num">${noshow}</span><span class="lbl">لم يحضر</span></div>
+  `;
+
+  const upcoming = mine.filter(b=>b.status==='pending' || b.status==='confirmed')
+                        .sort((a,b)=> (a.date+a.time > b.date+b.time ? 1:-1));
+  document.getElementById('owner-bookings').innerHTML = upcoming.length
+    ? upcoming.map(b=>bookingRowHTML(b, null, true)).join('')
+    : '<div class="empty">لا توجد حجوزات قادمة</div>';
+}
+
+function ownerSetStatus(bookingId, status){
+  const b = bookings.find(x=>x.id===bookingId);
+  b.status = status;
+  if(status==='confirmed') b.confirmedAt = new Date().toISOString();
+
+  if(status==='noshow'){
+    const c = customers[b.customerPhone];
+    if(c){
+      c.noshowCount++;
+      if(c.noshowCount>=3) c.restricted = true;
+    }
+  }
+  toast(status==='confirmed' ? 'تم تأكيد الحضور' : 'تم تسجيل عدم الحضور');
+  renderOwnerDash();
+}
+
+/* ============================================================
+   واجهة المؤسس / الإدارة
+   ============================================================ */
+let newTier = 'founding';
+function pickNewTier(tier, el){
+  newTier = tier;
+  el.parentElement.querySelectorAll('button').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel');
+}
+
+function addRestaurant(){
+  const name = document.getElementById('admin-new-name').value.trim();
+  const phone = document.getElementById('admin-new-phone').value.trim();
+  if(!name || !phone){ toast('أكمل بيانات المطعم'); return; }
+  const id = 'r'+(restaurants.length+1)+Math.floor(Math.random()*1000);
+  restaurants.push({id, name, phone, tier:newTier, active:true});
+  document.getElementById('admin-new-name').value='';
+  document.getElementById('admin-new-phone').value='';
+  toast('تمت إضافة المطعم');
+  renderAdmin();
+}
+
+function toggleRestActive(id){
+  const r = restaurants.find(x=>x.id===id);
+  r.active = !r.active;
+  renderAdmin();
+}
+
+function changeRestTier(id, tier){
+  const r = restaurants.find(x=>x.id===id);
+  r.tier = tier;
+  renderAdmin();
+}
+
+function removeRestaurant(id){
+  restaurants = restaurants.filter(x=>x.id!==id);
+  renderAdmin();
+}
+
+function savePricing(){
+  pricing.founding = parseInt(document.getElementById('price-founding').value||0);
+  pricing.standard = parseInt(document.getElementById('price-standard').value||0);
+  toast('تم تحديث الأسعار لكل المطاعم حسب فئتها');
+  renderAdmin();
+}
+
+function renderAdmin(){
+  document.getElementById('price-founding').value = pricing.founding;
+  document.getElementById('price-standard').value = pricing.standard;
+
+  const totalRest = restaurants.length;
+  const totalBookings = bookings.length;
+  const totalNoshow = bookings.filter(b=>b.status==='noshow').length;
+  document.getElementById('admin-stats').innerHTML = `
+    <div class="stat"><span class="num">${totalRest}</span><span class="lbl">مطاعم مسجّلة</span></div>
+    <div class="stat"><span class="num">${totalBookings}</span><span class="lbl">إجمالي الحجوزات</span></div>
+    <div class="stat"><span class="num">${totalNoshow}</span><span class="lbl">حالات عدم حضور</span></div>
+  `;
+
+  const tbl = document.getElementById('admin-rest-table');
+  tbl.innerHTML = `
+    <tr><th>المطعم</th><th>الفئة</th><th>الاشتراك</th><th>فعّال</th><th></th></tr>
+    ${restaurants.map(r=>`
+      <tr>
+        <td>${r.name}<div class="muted" style="font-size:11px" dir="ltr">${r.phone}</div></td>
+        <td>
+          <select onchange="changeRestTier('${r.id}', this.value)" style="padding:4px 6px;font-size:12px;border-radius:6px;">
+            <option value="founding" ${r.tier==='founding'?'selected':''}>مؤسِّس</option>
+            <option value="standard" ${r.tier==='standard'?'selected':''}>عادي</option>
+          </select>
+        </td>
+        <td>${(r.tier==='founding'?pricing.founding:pricing.standard).toLocaleString('ar-IQ')} د.ع</td>
+        <td>
+          <label class="switch">
+            <input type="checkbox" ${r.active?'checked':''} onchange="toggleRestActive('${r.id}')">
+            <span class="slider"></span>
+          </label>
+        </td>
+        <td><button class="btn btn-danger btn-small" onclick="removeRestaurant('${r.id}')">حذف</button></td>
+      </tr>
+    `).join('')}
+  `;
+
+  const relTbl = document.getElementById('admin-reliability-table');
+  const custList = Object.values(customers);
+  relTbl.innerHTML = custList.length ? `
+    <tr><th>الزبون</th><th>الحجوزات</th><th>عدم حضور</th><th>الحالة</th></tr>
+    ${custList.map(c=>`
+      <tr>
+        <td>${c.name}<div class="muted" style="font-size:11px" dir="ltr">${c.phone}</div></td>
+        <td>${c.bookingsCount}</td>
+        <td>${c.noshowCount}</td>
+        <td>${c.restricted?'<span class="badge badge-noshow">مقيّد</span>':'<span class="badge badge-confirmed">عادي</span>'}</td>
+      </tr>
+    `).join('')}
+  ` : '<tr><td class="empty" colspan="4">لا يوجد زبائن مسجّلين بعد</td></tr>';
+}
+
+/* init */
+populateOwnerSelect();
+</script>
+</body>
+</html>
