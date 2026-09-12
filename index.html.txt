@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<!--
+  منصة حجز طاولات المطاعم — نموذج أولي تفاعلي (Prototype)
+  ======================================================
+  هذا ملف واحد يطبّق منطق العمل الكامل الموصوف بالمواصفات (ثلاثة أدوار،
+  تحقق OTP، تذكير قبل ساعة، فترة سماح ثم "لم يحضر" تلقائيًا، سجل موثوقية
+  الزبون، وتسعير مركزي يتحكم به المؤسس وينعكس تلقائيًا حسب فئة كل مطعم).
+
+  كل البيانات هنا في الذاكرة (JS state) ولا تُحفظ فعليًا — هذا نموذج
+  للعرض والاختبار الوظيفي فقط، وليس نسخة إنتاجية. للانتقال للإنتاج:
+    • استبدال الـ state بقاعدة بيانات Postgres عبر Supabase (الجداول
+      موصوفة بالضبط بالمواصفات: Restaurant / RestaurantUser / CustomerUser
+      / Booking / CustomerReliability / PricingSettings / AdminUser).
+    • تفعيل Row Level Security بحيث كل RestaurantUser يشوف فقط صفوف
+      Booking المرتبطة بـ restaurant_id تبعه.
+    • ربط دالة sendOtp() بخدمة حقيقية (Twilio Verify / WhatsApp Cloud API).
+    • ربط دالة runAutoChecks() بمهمة مجدولة (cron / Supabase Edge Function)
+      تُرسل التذكير الفعلي عبر WhatsApp Cloud API وتُحدّث الحالات دوريًا
+      بدل زر "تقديم الوقت" التجريبي المستخدم هنا لمحاكاة مرور الوقت.
+-->
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>حجزي — حجز طاولات المطاعم</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=El+Messiri:wght@500;600;700&family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAF5EC;
+    --surface:#FFFFFF;
+    --ink:#2B1810;
+    --ink-soft:#786457;
+    --ink-faint:#A6957F;
+    --gold:#AD7C24;
+    --gold-soft:#F1E4C8;
+    --wine:#6B1E2B;
+    --wine-dark:#4E141D;
+    --wine-soft:#F3E1E1;
+    --success:#3F6B4B;
+    --success-soft:#E1EBDE;
+    --warn:#A85D1E;
+    --warn-soft:#F4E2CB;
+    --danger:#A13327;
+    --danger-soft:#F5DFDA;
+    --border:#E6D9C4;
+    --radius:12px;
+    --shadow:0 1px 2px rgba(43,24,16,.06), 0 6px 20px -12px rgba(43,24,16,.25);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Tajawal',sans-serif;
+    line-height:1.55;
+    min-height:100vh;
+  }
+  h1,h2,h3,.display{font-family:'El Messiri',serif;font-weight:700;color:var(--ink);margin:0;}
+  a{color:inherit;}
+  button{font-family:inherit;cursor:pointer;}
+  input,select{font-family:inherit;}
+
+  .app-shell{
+    max-width:520px;
+    margin:0 auto;
+    min-height:100vh;
+    background:var(--surface);
+    box-shadow:0 0 40px rgba(43,24,16,.08);
+    display:flex;
+    flex-direction:column;
+    position:relative;
+  }
+
+  /* ---------- Topbar ---------- */
+  .topbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding:14px 18px;
+    border-bottom:1px solid var(--border);
+    background:var(--surface);
+    position:sticky;
+    top:0;
+    z-index:5;
+  }
+  .topbar-left{display:flex;align-items:center;gap:10px;min-width:0;}
+  .topbar-title{font-family:'El Messiri',serif;font-weight:700;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .topbar-sub{font-size:12px;color:var(--ink-soft);}
+  .icon-btn{
+    background:var(--gold-soft);
+    border:none;
+    width:36px;height:36px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:16px;color:var(--wine-dark);
+    flex:none;
+  }
+  .icon-btn:active{transform:scale(.94);}
+
+  .clock-widget{
+    display:flex;align-items:center;gap:6px;
+    background:var(--ink);
+    color:#fff;
+    border-radius:999px;
+    padding:5px 6px 5px 12px;
+    font-size:11.5px;
+    white-space:nowrap;
+  }
+  .clock-widget b{font-weight:700;}
+  .clock-widget .clk-btn{
+    background:rgba(255,255,255,.16);
+    border:none;color:#fff;border-radius:999px;
+    padding:4px 9px;font-size:11px;font-weight:700;
+  }
+
+  /* ---------- Generic layout ---------- */
+  .content{flex:1;padding:18px;padding-bottom:90px;}
+  .stack{display:flex;flex-direction:column;gap:14px;}
+  .row-between{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .muted{color:var(--ink-soft);}
+  .faint{color:var(--ink-faint);font-size:12.5px;}
+  .center{text-align:center;}
+  .hero{
+    padding:26px 4px 6px;
+  }
+  .hero .eyebrow{
+    color:var(--wine);
+    font-weight:700;
+    font-size:13px;
+    margin-bottom:6px;
+  }
+  .hero h1{font-size:28px;line-height:1.3;}
+  .hero p{color:var(--ink-soft);margin-top:8px;font-size:14.5px;}
+
+  /* ---------- Cards ---------- */
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px;
+    box-shadow:var(--shadow);
+  }
+  .role-card{
+    display:flex;align-items:center;gap:14px;
+    padding:16px;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    background:var(--surface);
+    text-align:right;
+  }
+  .role-card:active{background:var(--gold-soft);}
+  .role-emoji{
+    width:46px;height:46px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:22px;flex:none;
+  }
+  .role-card h3{font-size:16.5px;margin-bottom:2px;}
+  .role-card p{margin:0;font-size:12.5px;color:var(--ink-soft);}
+  .role-card .go{margin-inline-start:auto;color:var(--ink-faint);font-size:18px;}
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    border:none;border-radius:10px;
+    padding:13px 16px;
+    font-size:15px;font-weight:700;
+    width:100%;
+  }
+  .btn-primary{background:var(--wine);color:#fff;}
+  .btn-primary:active{background:var(--wine-dark);}
+  .btn-gold{background:var(--gold);color:#fff;}
+  .btn-secondary{background:var(--gold-soft);color:var(--wine-dark);}
+  .btn-ghost{background:transparent;color:var(--ink-soft);border:1px solid var(--border);}
+  .btn-danger{background:var(--danger-soft);color:var(--danger);}
+  .btn-success{background:var(--success-soft);color:var(--success);}
+  .btn-sm{padding:9px 12px;font-size:13px;width:auto;}
+  .btn:disabled{opacity:.45;}
+  .btn-row{display:flex;gap:10px;}
+  .btn-row .btn{flex:1;}
+  .link-btn{background:none;border:none;color:var(--wine);font-weight:700;font-size:13.5px;padding:6px;}
+
+  /* ---------- Fields ---------- */
+  .field{display:flex;flex-direction:column;gap:6px;}
+  .field label{font-size:13px;font-weight:700;color:var(--ink-soft);}
+  .field input, .field select{
+    border:1.5px solid var(--border);
+    border-radius:10px;
+    padding:12px 13px;
+    font-size:15px;
+    background:#fff;
+    color:var(--ink);
+    width:100%;
+  }
+  .field input:focus, .field select:focus{outline:2px solid var(--gold);border-color:var(--gold);}
+  .field-hint{font-size:12px;color:var(--ink-faint);}
+  .otp-boxes{display:flex;gap:8px;justify-content:center;direction:ltr;}
+  .otp-boxes input{
+    width:46px;height:54px;text-align:center;font-size:22px;font-weight:700;
+    border:1.5px solid var(--border);border-radius:10px;
+  }
+
+  /* ---------- Badges ---------- */
+  .badge{
+    display:inline-flex;align-items:center;gap:4px;
+    font-size:11.5px;font-weight:700;
+    padding:4px 9px;border-radius:999px;
+  }
+  .badge-pending{background:var(--warn-soft);color:var(--warn);}
+  .badge-confirmed{background:var(--success-soft);color:var(--success);}
+  .badge-noshow{background:var(--danger-soft);color:var(--danger);}
+  .badge-cancelled{background:#EEE7DC;color:var(--ink-soft);}
+  .badge-founding{background:var(--gold-soft);color:var(--gold);}
+  .badge-standard{background:#EEE7DC;color:var(--ink-soft);}
+  .badge-off{background:var(--danger-soft);color:var(--danger);}
+  .badge-flag{background:var(--wine-soft);color:var(--wine);}
+
+  /* ---------- Lists ---------- */
+  .list-item{
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:14px;
+    background:#fff;
+  }
+  .restaurant-item{display:flex;gap:12px;align-items:center;}
+  .r-avatar{
+    width:52px;height:52px;border-radius:12px;flex:none;
+    background:linear-gradient(155deg,var(--wine),var(--wine-dark));
+    color:#fff;display:flex;align-items:center;justify-content:center;
+    font-family:'El Messiri',serif;font-weight:700;font-size:20px;
+  }
+  .booking-code{
+    font-family:'El Messiri',serif;
+    letter-spacing:1px;
+  }
+
+  /* ---------- Tabs ---------- */
+  .tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:14px;}
+  .tabbtn{
+    flex:1;background:none;border:none;padding:10px 4px;
+    font-size:13.5px;font-weight:700;color:var(--ink-faint);
+    border-bottom:2.5px solid transparent;
+  }
+  .tabbtn.active{color:var(--wine);border-color:var(--wine);}
+
+  /* ---------- Stats ---------- */
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .stat-grid.cols-3{grid-template-columns:1fr 1fr 1fr;}
+  .stat-card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:14px 12px;text-align:center;
+  }
+  .stat-num{font-family:'El Messiri',serif;font-size:24px;font-weight:700;color:var(--wine);}
+  .stat-label{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+
+  /* ---------- Banners ---------- */
+  .banner{
+    border-radius:10px;padding:12px 14px;font-size:13px;
+    display:flex;gap:10px;align-items:flex-start;
+  }
+  .banner-warn{background:var(--warn-soft);color:#6b3d10;}
+  .banner-danger{background:var(--danger-soft);color:var(--danger);}
+  .banner-info{background:var(--gold-soft);color:#5c4110;}
+  .banner-success{background:var(--success-soft);color:var(--success);}
+
+  /* ---------- Bottom nav ---------- */
+  .bottom-nav{
+    position:sticky;bottom:0;
+    display:flex;border-top:1px solid var(--border);
+    background:var(--surface);
+    padding:8px 10px calc(8px + env(safe-area-inset-bottom));
+    gap:4px;
+  }
+  .bottom-nav button{
+    flex:1;background:none;border:none;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:6px;border-radius:10px;color:var(--ink-faint);font-size:11px;font-weight:700;
+  }
+  .bottom-nav button.active{color:var(--wine);background:var(--wine-soft);}
+  .bottom-nav .bn-icon{font-size:18px;}
+
+  .empty-state{
+    text-align:center;padding:40px 20px;color:var(--ink-faint);
+  }
+  .empty-state .e-icon{font-size:34px;margin-bottom:10px;}
+
+  .divider{height:1px;background:var(--border);margin:4px 0;}
+
+  ::placeholder{color:var(--ink-faint);}
+
+  @media (max-width:400px){
+    .content{padding:14px;}
+  }
+</style>
+</head>
+<body>
+<div class="app-shell" id="app"></div>
+
+<script>
+/* ============================================================
+   البيانات (State) — في الذاكرة فقط، تحاكي جداول قاعدة البيانات
+   ============================================================ */
+const GRACE_MINUTES = 15;      // فترة السماح بعد وقت الحجز
+const REMINDER_LEAD_MINUTES = 60; // إرسال التذكير قبل الموعد بساعة
+const LARGE_PARTY_THRESHOLD = 6;  // حجوزات تتطلب تأكيد هاتفي
+
+function uid(prefix){ return prefix + Math.random().toString(36).slice(2,8); }
+function bookingCode(){ return 'B' + Math.floor(1000 + Math.random()*9000); }
+function addMinutes(date, mins){ return new Date(date.getTime() + mins*60000); }
+
+const state = {
+  view: 'landing',
+  simTime: new Date(2026, 8, 12, 18, 0, 0), // "الآن" المحاكى للعرض التجريبي
+
+  pricing: { founding_price: 60000, standard_price: 85000 },
+
+  restaurants: [
+    { id:'r1', name:'مطعم دجلة', phone:'07701234567', tier:'founding', is_active:true },
+    { id:'r2', name:'بيت الشام', phone:'07709876543', tier:'founding', is_active:true },
+    { id:'r3', name:'زيتون وزعتر', phone:'07711122334', tier:'standard', is_active:true },
+    { id:'r4', name:'مندي الموصل', phone:'07733445566', tier:'standard', is_active:false },
+  ],
+
+  customers: [
+    { id:'c1', phone:'07700001111', name:'أحمد الجادر', phone_verified:true },
+    { id:'c2', phone:'07700002222', name:'زينب علي', phone_verified:true },
+    { id:'c3', phone:'07700003333', name:'مصطفى حسين', phone_verified:true },
+  ],
+
+  reliability: {
+    c1:{ total_bookings:5, total_noshows:2, is_restricted:false },
+    c2:{ total_bookings:2, total_noshows:0, is_restricted:false },
+    c3:{ total_bookings:4, total_noshows:3, is_restricted:true },
+  },
+
+  bookings: [
+    { id:uid('bk'), code:bookingCode(), restaurant_id:'r1', customer_id:'c1',
+      booking_date:'2026-09-12', booking_time:'19:00', party_size:2,
+      status:'pending', reminder_sent_at:null, confirmed_at:null,
+      created_at:new Date(2026,8,12,10,0) },
+
+    { id:uid('bk'), code:bookingCode(), restaurant_id:'r1', customer_id:'c2',
+      booking_date:'2026-09-12', booking_time:'20:30', party_size:7,
+      status:'pending', reminder_sent_at:null, confirmed_at:null,
+      created_at:new Date(2026,8,12,17,30) },
+
+    { id:uid('bk'), code:bookingCode(), restaurant_id:'r2', customer_id:'c1',
+      booking_date:'2026-09-11', booking_time:'21:00', party_size:4,
+      status:'noshow', reminder_sent_at:new Date(2026,8,11,20,0), confirmed_at:null,
+      created_at:new Date(2026,8,10,12,0) },
+
+    { id:uid('bk'), code:bookingCode(), restaurant_id:'r2', customer_id:'c3',
+      booking_date:'2026-09-10', booking_time:'19:30', party_size:3,
+      status:'confirmed', reminder_sent_at:new Date(2026,8,10,18,30),
+      confirmed_at:new Date(2026,8,10,18,40), created_at:new Date(2026,8,9,9,0) },
+
+    { id:uid('bk'), code:bookingCode(), restaurant_id:'r3', customer_id:'c2',
+      booking_date:'2026-09-12', booking_time:'19:15', party_size:2,
+      status:'confirmed', reminder_sent_at:new Date(2026,8,12,17,45),
+      confirmed_at:new Date(2026,8,12,17,50), created_at:new Date(2026,8,11,14,0) },
+  ],
+
+  // جلسات مؤقتة
+  otpPending: null,          // { phone, code }
+  currentCustomer: null,     // customer object أو null
+  customerFlow: {},          // بيانات مؤقتة أثناء تسجيل الدخول/الحجز
+  currentOwnerRestaurantId: null,
+  isAdmin: false,
+  adminTab: 'restaurants',
+  ownerTab: 'upcoming',
+  toast: null,
+};
+
+function todayStr(){
+  const d = state.simTime;
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
+/* ============================================================
+   منطق الأعمال: تذكيرات واتساب + فترة السماح + عدم الحضور التلقائي
+   ============================================================ */
+function bookingDateTime(b){
+  const [y,m,d] = b.booking_date.split('-').map(Number);
+  const [hh,mm] = b.booking_time.split(':').map(Number);
+  return new Date(y, m-1, d, hh, mm);
+}
+
+function ensureReliability(customerId){
+  if(!state.reliability[customerId]){
+    state.reliability[customerId] = { total_bookings:0, total_noshows:0, is_restricted:false };
+  }
+  return state.reliability[customerId];
+}
+
+function runAutoChecks(){
+  const now = state.simTime;
+  state.bookings.forEach(b=>{
+    if(b.status==='cancelled') return;
+    const dt = bookingDateTime(b);
+    const reminderAt = addMinutes(dt, -REMINDER_LEAD_MINUTES);
+    const graceEnd = addMinutes(dt, GRACE_MINUTES);
+
+    // 1) إرسال التذكير قبل الموعد بساعة بالضبط (أو ما بعده إذا فات الوقت بالمحاكاة)
+    if(!b.reminder_sent_at && now >= reminderAt && (b.status==='pending' || b.status==='confirmed')){
+      b.reminder_sent_at = now;
+    }
+    // 2) بعد فترة السماح: تحويل الحجوزات غير المؤكدة إلى "لم يحضر" تلقائيًا وتحرير الطاولة
+    if(b.status==='pending' && now >= graceEnd){
+      b.status = 'noshow';
+      const rel = ensureReliability(b.customer_id);
+      rel.total_noshows += 1;
+      if(rel.total_noshows >= 3) rel.is_restricted = true;
+    }
+  });
+}
+
+function createBooking({restaurant_id, customer_id, date, time, party_size}){
+  const b = {
+    id:uid('bk'), code:bookingCode(), restaurant_id, customer_id,
+    booking_date:date, booking_time:time, party_size:Number(party_size),
+    status:'pending', reminder_sent_at:null, confirmed_at:null,
+    created_at:new Date(state.simTime),
+  };
+  state.bookings.push(b);
+  const rel = ensureReliability(customer_id);
+  rel.total_bookings += 1;
+  return b;
+}
+
+function priceForTier(tier){
+  return tier==='founding' ? state.pricing.founding_price : state.pricing.standard_price;
+}
+
+/* ============================================================
+   أدوات تنسيق
+   ============================================================ */
+const AR_DAYS = ['الأحد','الاثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+const AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+function fmtDate(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  const dt = new Date(y,m-1,d);
+  return `${AR_DAYS[dt.getDay()]} ${d} ${AR_MONTHS[m-1]}`;
+}
+function fmtTime(t){
+  const [hh,mm] = t.split(':').map(Number);
+  const period = hh>=12 ? 'م' : 'ص';
+  let h12 = hh % 12; if(h12===0) h12=12;
+  return `${h12}:${String(mm).padStart(2,'0')} ${period}`;
+}
+function fmtClock(dt){
+  const hh = dt.getHours(), mm = dt.getMinutes();
+  const period = hh>=12 ? 'م':'ص';
+  let h12 = hh%12; if(h12===0) h12=12;
+  return `${AR_DAYS[dt.getDay()]} ${String(h12).padStart(2,'0')}:${String(mm).padStart(2,'0')} ${period}`;
+}
+function fmtMoney(n){ return n.toLocaleString('en-US') + ' د.ع'; }
+function statusLabel(s){
+  return {pending:'بانتظار التأكيد', confirmed:'مؤكد', noshow:'لم يحضر', cancelled:'ملغى'}[s];
+}
+function tierLabel(t){ return t==='founding' ? 'مؤسِّس' : 'عادي'; }
+function restaurantById(id){ return state.restaurants.find(r=>r.id===id); }
+function customerById(id){ return state.customers.find(c=>c.id===id); }
+
+/* ============================================================
+   محاكاة الوقت (أداة عرض فقط)
+   ============================================================ */
+function advanceTime(mins){
+  state.simTime = addMinutes(state.simTime, mins);
+  render();
+}
+
+/* ============================================================
+   التنقل
+   ============================================================ */
+function goto(view, extra){
+  state.view = view;
+  if(extra) Object.assign(state, extra);
+  render();
+}
+function logoutAll(){
+  state.currentCustomer = null;
+  state.currentOwnerRestaurantId = null;
+  state.isAdmin = false;
+  state.customerFlow = {};
+  goto('landing');
+}
+
+/* ============================================================
+   العرض (Render)
+   ============================================================ */
+function render(){
+  runAutoChecks();
+  const app = document.getElementById('app');
+  let html = '';
+  switch(state.view){
+    case 'landing': html = viewLanding(); break;
+
+    case 'c-phone': html = viewCustomerPhone(); break;
+    case 'c-otp': html = viewCustomerOtp(); break;
+    case 'c-name': html = viewCustomerName(); break;
+    case 'c-home': html = viewCustomerHome(); break;
+    case 'c-book': html = viewCustomerBook(); break;
+    case 'c-confirm': html = viewCustomerConfirmed(); break;
+    case 'c-mybookings': html = viewCustomerMyBookings(); break;
+
+    case 'o-login': html = viewOwnerLogin(); break;
+    case 'o-dash': html = viewOwnerDashboard(); break;
+
+    case 'a-login': html = viewAdminLogin(); break;
+    case 'a-dash': html = viewAdminDashboard(); break;
+
+    default: html = viewLanding();
+  }
+  app.innerHTML = html;
+  window.scrollTo(0,0);
+}
+
+/* ---------- شريط الساعة التجريبية ---------- */
+function clockWidget(){
+  return `
+  <div class="clock-widget">
+    <span>⏱ <b>${fmtClock(state.simTime)}</b></span>
+    <button class="clk-btn" onclick="advanceTime(15)">‎+١٥د</button>
+    <button class="clk-btn" onclick="advanceTime(60)">‎+١س</button>
+  </div>`;
+}
+
+/* ============================================================
+   الصفحة الرئيسية — اختيار الدور
+   ============================================================ */
+function viewLanding(){
+  return `
+  <div class="topbar">
+    <div class="topbar-left">
+      <div>
+        <div class="topbar-title">حجزي</div>
+        <div class="topbar-sub">حجز طاولات المطاعم — الموصل</div>
+      </div>
+    </div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="hero">
+      <div class="eyebrow">نموذج تجريبي تفاعلي</div>
+      <h1>خلّي كل طاولة تنحجز صح، من غير ما تضيع بالانتظار</h1>
+      <p>منصة تربط الزبون بالمطعم مباشرة: حجز بثوانٍ، تذكير واتساب قبل الموعد بساعة، وتحرير الطاولة تلقائيًا إذا ما وصل الزبون.</p>
+    </div>
+
+    <div class="stack" style="gap:10px;">
+      <button class="role-card" onclick="goto('c-phone')">
+        <div class="role-emoji" style="background:var(--wine-soft);">🍽️</div>
+        <div>
+          <h3>أنا زبون</h3>
+          <p>احجز طاولة بمطعمك المفضل بثواني</p>
+        </div>
+        <div class="go">‹</div>
+      </button>
+
+      <button class="role-card" onclick="goto('o-login')">
+        <div class="role-emoji" style="background:var(--gold-soft);">🧑‍🍳</div>
+        <div>
+          <h3>أنا صاحب مطعم</h3>
+          <p>إدارة حجوزات مطعمك ومتابعتها لحظة بلحظة</p>
+        </div>
+        <div class="go">‹</div>
+      </button>
+
+      <button class="role-card" onclick="goto('a-login')">
+        <div class="role-emoji" style="background:#EFE7F4;">🛠️</div>
+        <div>
+          <h3>لوحة الإدارة</h3>
+          <p>إدارة المطاعم والتسعير والتحليلات العامة</p>
+        </div>
+        <div class="go">‹</div>
+      </button>
+    </div>
+
+    <div class="banner banner-info">
+      <span>ℹ️</span>
+      <span>هذا عرض تفاعلي: استخدم أداة الساعة ⏱ بالأعلى لتقديم الوقت ومشاهدة إرسال التذكير التلقائي، وتحويل الحجوزات غير المؤكدة إلى "لم يحضر" بعد فترة السماح.</span>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   تدفق الزبون — رقم الهاتف
+   ============================================================ */
+function viewCustomerPhone(){
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="goto('landing')">›</button>
+    <div class="topbar-left"><div class="topbar-title">تسجيل الدخول</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="hero" style="padding-top:10px;">
+      <h1 style="font-size:22px;">أدخل رقم هاتفك</h1>
+      <p>نرسل رمز تحقق لمرة واحدة. حسابك يُنشأ تلقائيًا عند أول حجز، وبيانتك تنحفظ لأي حجز جاي.</p>
+    </div>
+    <div class="field">
+      <label>رقم الهاتف</label>
+      <input id="phoneInput" type="tel" inputmode="numeric" placeholder="07XXXXXXXXX" maxlength="11"
+        value="${state.customerFlow.phone||''}">
+      <div class="field-hint">مثال: 07701234567</div>
+    </div>
+    <button class="btn btn-primary" onclick="submitPhone()">إرسال رمز التحقق</button>
+  </div>`;
+}
+function submitPhone(){
+  const phone = document.getElementById('phoneInput').value.trim();
+  if(phone.length < 10){ toastMsg('أدخل رقم هاتف صحيح'); render(); return; }
+  const code = String(Math.floor(1000 + Math.random()*9000));
+  state.otpPending = { phone, code };
+  state.customerFlow.phone = phone;
+  goto('c-otp');
+}
+
+function viewCustomerOtp(){
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="goto('c-phone')">›</button>
+    <div class="topbar-left"><div class="topbar-title">رمز التحقق</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="hero" style="padding-top:10px;">
+      <h1 style="font-size:22px;">أدخل رمز التحقق</h1>
+      <p>أرسلنا رمزًا مكوّنًا من 4 أرقام إلى ${state.otpPending.phone} عبر واتساب.</p>
+    </div>
+    <div class="banner banner-info">🔐 رمز تجريبي للعرض فقط: <b style="font-size:16px;">${state.otpPending.code}</b></div>
+    <div class="otp-boxes">
+      ${[0,1,2,3].map(i=>`<input maxlength="1" inputmode="numeric" class="otp-digit" data-i="${i}" oninput="otpAutoNext(this)">`).join('')}
+    </div>
+    <button class="btn btn-primary" onclick="submitOtp()">تأكيد</button>
+    <button class="link-btn" onclick="submitPhone()">إعادة إرسال الرمز</button>
+  </div>`;
+}
+function otpAutoNext(el){
+  el.value = el.value.replace(/[^0-9]/g,'');
+  if(el.value && el.nextElementSibling) el.nextElementSibling.focus();
+}
+function submitOtp(){
+  const digits = Array.from(document.querySelectorAll('.otp-digit')).map(i=>i.value).join('');
+  if(digits.length<4){ toastMsg('أكمل الرمز'); render(); return; }
+  if(digits !== state.otpPending.code){ toastMsg('رمز غير صحيح، حاول مجددًا'); render(); return; }
+  const phone = state.otpPending.phone;
+  let cust = state.customers.find(c=>c.phone===phone);
+  state.otpPending = null;
+  if(cust){
+    state.currentCustomer = cust;
+    goto('c-home');
+  } else {
+    state.customerFlow.phone = phone;
+    goto('c-name');
+  }
+}
+
+function viewCustomerName(){
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="goto('c-otp')">›</button>
+    <div class="topbar-left"><div class="topbar-title">إكمال الحساب</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="hero" style="padding-top:10px;">
+      <h1 style="font-size:22px;">شنو اسمك؟</h1>
+      <p>نحتاج اسمك مرة وحدة بس — راح يُستخدم تلقائيًا بكل حجوزاتك الجاية.</p>
+    </div>
+    <div class="field">
+      <label>الاسم الكامل</label>
+      <input id="nameInput" type="text" placeholder="مثال: أحمد الجادر">
+    </div>
+    <button class="btn btn-primary" onclick="submitName()">إنشاء الحساب والمتابعة</button>
+  </div>`;
+}
+function submitName(){
+  const name = document.getElementById('nameInput').value.trim();
+  if(!name){ toastMsg('أدخل الاسم'); render(); return; }
+  const cust = { id:uid('c'), phone:state.customerFlow.phone, name, phone_verified:true };
+  state.customers.push(cust);
+  ensureReliability(cust.id);
+  state.currentCustomer = cust;
+  state.customerFlow = {};
+  goto('c-home');
+}
+
+/* ---------- قائمة المطاعم ---------- */
+function viewCustomerHome(){
+  const cust = state.currentCustomer;
+  const rel = state.reliability[cust.id];
+  const list = state.restaurants.filter(r=>r.is_active);
+  return `
+  <div class="topbar">
+    <div class="topbar-left">
+      <div>
+        <div class="topbar-title">أهلًا، ${cust.name.split(' ')[0]}</div>
+        <div class="topbar-sub">اختر مطعمًا للحجز</div>
+      </div>
+    </div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    ${rel.is_restricted ? `
+      <div class="banner banner-danger">🚫 حسابك مقيّد مؤقتًا بسبب تكرار عدم الحضور (${rel.total_noshows} مرات). تواصل مع المطعم لإعادة التفعيل — لا يمكنك إنشاء حجوزات جديدة حاليًا.</div>
+    ` : rel.total_noshows>=2 ? `
+      <div class="banner banner-warn">⚠️ لديك ${rel.total_noshows} حالتا عدم حضور سابقة. تغيّب إضافي واحد سيؤدي إلى تقييد حسابك.</div>
+    ` : ''}
+
+    <div class="stack" style="gap:10px;">
+      ${list.map(r=>`
+        <button class="role-card restaurant-item" onclick="${rel.is_restricted?'toastNoop()':`openBooking('${r.id}')`}" ${rel.is_restricted?'style="opacity:.5;"':''}>
+          <div class="r-avatar">${r.name.trim()[0]}</div>
+          <div>
+            <h3>${r.name}</h3>
+            <p><span class="badge badge-${r.tier}">${tierLabel(r.tier)}</span></p>
+          </div>
+          <div class="go">‹</div>
+        </button>
+      `).join('')}
+    </div>
+  </div>
+  ${customerBottomNav('home')}`;
+}
+function toastNoop(){ toastMsg('حسابك مقيّد — لا يمكن الحجز حاليًا'); render(); }
+
+function customerBottomNav(active){
+  return `
+  <div class="bottom-nav">
+    <button class="${active==='home'?'active':''}" onclick="goto('c-home')"><span class="bn-icon">🍽️</span>المطاعم</button>
+    <button class="${active==='bookings'?'active':''}" onclick="goto('c-mybookings')"><span class="bn-icon">📋</span>حجوزاتي</button>
+    <button onclick="logoutAll()"><span class="bn-icon">↩️</span>خروج</button>
+  </div>`;
+}
+
+/* ---------- نموذج الحجز ---------- */
+function openBooking(restaurantId){
+  state.customerFlow.bookingRestaurant = restaurantId;
+  goto('c-book');
+}
+function viewCustomerBook(){
+  const r = restaurantById(state.customerFlow.bookingRestaurant);
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="goto('c-home')">›</button>
+    <div class="topbar-left"><div class="topbar-title">${r.name}</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="card stack">
+      <div class="field">
+        <label>التاريخ</label>
+        <input id="bkDate" type="date" min="${todayStr()}" value="${todayStr()}">
+      </div>
+      <div class="field">
+        <label>الوقت</label>
+        <input id="bkTime" type="time" value="19:00">
+      </div>
+      <div class="field">
+        <label>عدد الأشخاص</label>
+        <input id="bkParty" type="number" min="1" max="20" value="2">
+        <div class="field-hint">الحجوزات لـ ${LARGE_PARTY_THRESHOLD} أشخاص فأكثر تتطلب اتصالًا هاتفيًا لتأكيدها من طاقم المطعم.</div>
+      </div>
+    </div>
+    <div class="banner banner-info">
+      👤 الاسم ورقم الهاتف يُملآن تلقائيًا من حسابك: <b>${state.currentCustomer.name}</b> — ${state.currentCustomer.phone}
+    </div>
+    <button class="btn btn-primary" onclick="submitBooking()">تأكيد الحجز</button>
+  </div>`;
+}
+function submitBooking(){
+  const date = document.getElementById('bkDate').value;
+  const time = document.getElementById('bkTime').value;
+  const party = Number(document.getElementById('bkParty').value);
+  if(!date||!time||!party){ toastMsg('أكمل كل الحقول'); render(); return; }
+  const b = createBooking({
+    restaurant_id: state.customerFlow.bookingRestaurant,
+    customer_id: state.currentCustomer.id,
+    date, time, party_size: party,
+  });
+  state.customerFlow.lastBookingId = b.id;
+  goto('c-confirm');
+}
+function viewCustomerConfirmed(){
+  const b = state.bookings.find(x=>x.id===state.customerFlow.lastBookingId);
+  const r = restaurantById(b.restaurant_id);
+  const large = b.party_size >= LARGE_PARTY_THRESHOLD;
+  return `
+  <div class="topbar">
+    <div class="topbar-left"><div class="topbar-title">تم الحجز</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="card center stack" style="padding:28px 16px;">
+      <div style="font-size:38px;">✅</div>
+      <h2>تم تأكيد حجزك</h2>
+      <p class="muted">كود الحجز الخاص بك</p>
+      <div class="display booking-code" style="font-size:30px;color:var(--wine);">${b.code}</div>
+    </div>
+    <div class="list-item stack">
+      <div class="row-between"><span class="muted">المطعم</span><b>${r.name}</b></div>
+      <div class="row-between"><span class="muted">التاريخ</span><b>${fmtDate(b.booking_date)}</b></div>
+      <div class="row-between"><span class="muted">الوقت</span><b>${fmtTime(b.booking_time)}</b></div>
+      <div class="row-between"><span class="muted">عدد الأشخاص</span><b>${b.party_size}</b></div>
+    </div>
+    ${large ? `<div class="banner banner-warn">📞 حجزك لـ ${b.party_size} أشخاص — سيتصل بك طاقم المطعم هاتفيًا لتأكيد الحجز، بدل الاعتماد على واتساب فقط.</div>` : `<div class="banner banner-info">⏰ راح توصلك رسالة واتساب تذكيرية قبل الموعد بساعة وحدة، فيها زر لتأكيد حضورك.</div>`}
+    <button class="btn btn-primary" onclick="goto('c-mybookings')">عرض حجوزاتي</button>
+  </div>`;
+}
+
+/* ---------- حجوزاتي ---------- */
+function viewCustomerMyBookings(){
+  const cust = state.currentCustomer;
+  const mine = state.bookings.filter(b=>b.customer_id===cust.id)
+    .sort((a,b)=> bookingDateTime(b)-bookingDateTime(a));
+  return `
+  <div class="topbar">
+    <div class="topbar-left"><div class="topbar-title">حجوزاتي</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    ${mine.length===0 ? `
+      <div class="empty-state"><div class="e-icon">📋</div>ما عندك حجوزات بعد</div>
+    ` : mine.map(b=>{
+      const r = restaurantById(b.restaurant_id);
+      const canConfirm = b.status==='pending' && b.reminder_sent_at;
+      return `
+      <div class="list-item stack">
+        <div class="row-between">
+          <b>${r.name}</b>
+          <span class="badge badge-${b.status}">${statusLabel(b.status)}</span>
+        </div>
+        <div class="faint">${fmtDate(b.booking_date)} • ${fmtTime(b.booking_time)} • ${b.party_size} أشخاص</div>
+        <div class="faint">كود الحجز: <span class="booking-code">${b.code}</span></div>
+        ${b.reminder_sent_at ? `<div class="faint">🔔 وصلتك رسالة تذكير واتساب</div>` : ''}
+        ${canConfirm ? `<button class="btn btn-success btn-sm" onclick="confirmMyBooking('${b.id}')">تأكيد الحضور من الرسالة</button>` : ''}
+      </div>`;
+    }).join('')}
+  </div>
+  ${customerBottomNav('bookings')}`;
+}
+function confirmMyBooking(id){
+  const b = state.bookings.find(x=>x.id===id);
+  b.status='confirmed'; b.confirmed_at = new Date(state.simTime);
+  toastMsg('تم تأكيد حضورك، بانتظارك!');
+  render();
+}
+
+/* ============================================================
+   تدفق صاحب المطعم
+   ============================================================ */
+function viewOwnerLogin(){
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="goto('landing')">›</button>
+    <div class="topbar-left"><div class="topbar-title">دخول صاحب المطعم</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="field">
+      <label>المطعم</label>
+      <select id="ownerRestaurant">
+        ${state.restaurants.map(r=>`<option value="${r.id}">${r.name}${r.is_active?'':' (معطّل)'}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field">
+      <label>كلمة المرور</label>
+      <input id="ownerPass" type="password" placeholder="••••••••">
+      <div class="field-hint">للعرض التجريبي: أي كلمة مرور تعمل.</div>
+    </div>
+    <button class="btn btn-primary" onclick="ownerLogin()">تسجيل الدخول</button>
+  </div>`;
+}
+function ownerLogin(){
+  const id = document.getElementById('ownerRestaurant').value;
+  const r = restaurantById(id);
+  if(!r.is_active){ toastMsg('هذا الحساب معطّل من قبل الإدارة، تواصل معهم'); render(); return; }
+  state.currentOwnerRestaurantId = id;
+  goto('o-dash');
+}
+
+function viewOwnerDashboard(){
+  const r = restaurantById(state.currentOwnerRestaurantId);
+  const all = state.bookings.filter(b=>b.restaurant_id===r.id).sort((a,b)=>bookingDateTime(a)-bookingDateTime(b));
+  const upcoming = all.filter(b=> (b.status==='pending'||b.status==='confirmed') && bookingDateTime(b) >= addMinutes(state.simTime,-GRACE_MINUTES));
+  const shown = state.ownerTab==='upcoming' ? upcoming : all;
+
+  const total = all.length;
+  const confirmedCount = all.filter(b=>b.status==='confirmed').length;
+  const noshowCount = all.filter(b=>b.status==='noshow').length;
+
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="logoutAll()">↩</button>
+    <div class="topbar-left">
+      <div>
+        <div class="topbar-title">${r.name}</div>
+        <div class="topbar-sub">${tierLabel(r.tier)} • ${fmtMoney(priceForTier(r.tier))}/شهريًا</div>
+      </div>
+    </div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="stat-grid cols-3">
+      <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">إجمالي الحجوزات</div></div>
+      <div class="stat-card"><div class="stat-num">${confirmedCount}</div><div class="stat-label">مؤكدة</div></div>
+      <div class="stat-card"><div class="stat-num">${noshowCount}</div><div class="stat-label">لم يحضر</div></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tabbtn ${state.ownerTab==='upcoming'?'active':''}" onclick="state.ownerTab='upcoming';render();">القادمة (${upcoming.length})</button>
+      <button class="tabbtn ${state.ownerTab==='all'?'active':''}" onclick="state.ownerTab='all';render();">كل الحجوزات (${all.length})</button>
+    </div>
+
+    ${shown.length===0 ? `<div class="empty-state"><div class="e-icon">🗓️</div>لا توجد حجوزات هنا حاليًا</div>` :
+      shown.map(b=>{
+        const c = customerById(b.customer_id);
+        const rel = state.reliability[b.customer_id];
+        const large = b.party_size >= LARGE_PARTY_THRESHOLD;
+        const isNew = (state.simTime - new Date(b.created_at)) < 60*60000 && b.status==='pending';
+        return `
+        <div class="list-item stack">
+          <div class="row-between">
+            <b>${c.name}</b>
+            <span class="badge badge-${b.status}">${statusLabel(b.status)}</span>
+          </div>
+          <div class="faint">${c.phone}</div>
+          <div class="faint">${fmtDate(b.booking_date)} • ${fmtTime(b.booking_time)} • ${b.party_size} أشخاص</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${large ? `<span class="badge badge-flag">📞 يتطلب اتصال هاتفي</span>` : ''}
+            ${b.reminder_sent_at ? `<span class="badge badge-confirmed">🔔 أُرسل التذكير</span>` : ''}
+            ${rel && rel.total_noshows>0 ? `<span class="badge badge-noshow">تغيّب سابق ×${rel.total_noshows}</span>` : ''}
+            ${isNew ? `<span class="badge badge-flag">🆕 حجز جديد</span>` : ''}
+          </div>
+          ${b.status==='pending' ? `
+          <div class="btn-row">
+            <button class="btn btn-success btn-sm" onclick="ownerSetStatus('${b.id}','confirmed')">تأكيد الحضور</button>
+            <button class="btn btn-danger btn-sm" onclick="ownerSetStatus('${b.id}','noshow')">لم يحضر</button>
+          </div>` : ''}
+        </div>`;
+      }).join('')
+    }
+  </div>`;
+}
+function ownerSetStatus(id, status){
+  const b = state.bookings.find(x=>x.id===id);
+  b.status = status;
+  if(status==='confirmed') b.confirmed_at = new Date(state.simTime);
+  if(status==='noshow'){
+    const rel = ensureReliability(b.customer_id);
+    rel.total_noshows += 1;
+    if(rel.total_noshows>=3) rel.is_restricted = true;
+  }
+  render();
+}
+
+/* ============================================================
+   تدفق الإدارة (المؤسس)
+   ============================================================ */
+function viewAdminLogin(){
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="goto('landing')">›</button>
+    <div class="topbar-left"><div class="topbar-title">دخول الإدارة</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="field">
+      <label>البريد الإلكتروني</label>
+      <input id="adminEmail" type="email" placeholder="admin@hajzi.iq" value="admin@hajzi.iq">
+    </div>
+    <div class="field">
+      <label>كلمة المرور</label>
+      <input id="adminPass" type="password" placeholder="••••••••">
+      <div class="field-hint">للعرض التجريبي: أي كلمة مرور تعمل.</div>
+    </div>
+    <button class="btn btn-primary" onclick="adminLogin()">دخول</button>
+  </div>`;
+}
+function adminLogin(){
+  state.isAdmin = true;
+  goto('a-dash');
+}
+
+function viewAdminDashboard(){
+  const activeCount = state.restaurants.filter(r=>r.is_active).length;
+  const totalBookings = state.bookings.length;
+  const totalNoshow = state.bookings.filter(b=>b.status==='noshow').length;
+  const noshowRate = totalBookings ? Math.round(totalNoshow/totalBookings*100) : 0;
+  const revenue = state.restaurants.filter(r=>r.is_active).reduce((s,r)=>s+priceForTier(r.tier),0);
+
+  let body = '';
+  if(state.adminTab==='restaurants') body = adminRestaurantsTab();
+  else if(state.adminTab==='pricing') body = adminPricingTab();
+  else body = adminAnalyticsTab(activeCount, totalBookings, totalNoshow, noshowRate, revenue);
+
+  return `
+  <div class="topbar">
+    <button class="icon-btn" onclick="logoutAll()">↩</button>
+    <div class="topbar-left"><div class="topbar-title">لوحة الإدارة</div></div>
+    ${clockWidget()}
+  </div>
+  <div class="content stack">
+    <div class="tabs">
+      <button class="tabbtn ${state.adminTab==='restaurants'?'active':''}" onclick="state.adminTab='restaurants';render();">المطاعم</button>
+      <button class="tabbtn ${state.adminTab==='pricing'?'active':''}" onclick="state.adminTab='pricing';render();">التسعير</button>
+      <button class="tabbtn ${state.adminTab==='analytics'?'active':''}" onclick="state.adminTab='analytics';render();">التحليلات</button>
+    </div>
+    ${body}
+  </div>`;
+}
+
+function adminRestaurantsTab(){
+  return `
+  <div class="stack">
+    ${state.restaurants.map(r=>`
+      <div class="list-item stack">
+        <div class="row-between">
+          <b>${r.name}</b>
+          <span class="badge ${r.is_active?'badge-confirmed':'badge-off'}">${r.is_active?'مفعّل':'معطّل'}</span>
+        </div>
+        <div class="faint">${r.phone}</div>
+        <div class="row-between">
+          <span class="badge badge-${r.tier}">${tierLabel(r.tier)}</span>
+          <b>${fmtMoney(priceForTier(r.tier))}/شهريًا</b>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary btn-sm" onclick="adminToggleTier('${r.id}')">تبديل الفئة</button>
+          <button class="btn ${r.is_active?'btn-danger':'btn-success'} btn-sm" onclick="adminToggleActive('${r.id}')">${r.is_active?'تعطيل':'تفعيل'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="adminDeleteRestaurant('${r.id}')">حذف</button>
+        </div>
+      </div>
+    `).join('')}
+
+    <div class="card stack">
+      <h3 style="font-size:15px;">إضافة مطعم جديد</h3>
+      <div class="field"><label>الاسم</label><input id="newRName" type="text" placeholder="اسم المطعم"></div>
+      <div class="field"><label>رقم الهاتف</label><input id="newRPhone" type="tel" placeholder="07XXXXXXXXX"></div>
+      <div class="field"><label>الفئة</label>
+        <select id="newRTier">
+          <option value="founding">مؤسِّس (${fmtMoney(state.pricing.founding_price)})</option>
+          <option value="standard">عادي (${fmtMoney(state.pricing.standard_price)})</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="adminAddRestaurant()">إضافة المطعم</button>
+    </div>
+  </div>`;
+}
+function adminToggleTier(id){
+  const r = restaurantById(id);
+  r.tier = r.tier==='founding' ? 'standard' : 'founding';
+  render();
+}
+function adminToggleActive(id){
+  const r = restaurantById(id);
+  r.is_active = !r.is_active;
+  render();
+}
+function adminDeleteRestaurant(id){
+  state.restaurants = state.restaurants.filter(r=>r.id!==id);
+  state.bookings = state.bookings.filter(b=>b.restaurant_id!==id);
+  render();
+}
+function adminAddRestaurant(){
+  const name = document.getElementById('newRName').value.trim();
+  const phone = document.getElementById('newRPhone').value.trim();
+  const tier = document.getElementById('newRTier').value;
+  if(!name||!phone){ toastMsg('أكمل بيانات المطعم'); render(); return; }
+  state.restaurants.push({ id:uid('r'), name, phone, tier, is_active:true });
+  toastMsg('تمت إضافة المطعم');
+  render();
+}
+
+function adminPricingTab(){
+  return `
+  <div class="stack">
+    <div class="banner banner-info">تغيير السعر هنا ينعكس فورًا على كل المطاعم المصنّفة بنفس الفئة، بدون الحاجة لتعديل كل مطعم يدويًا.</div>
+    <div class="card stack">
+      <div class="field">
+        <label>سعر فئة "المؤسِّسين" (شهريًا، د.ع)</label>
+        <input id="foundingPrice" type="number" step="1000" value="${state.pricing.founding_price}">
+      </div>
+      <div class="field">
+        <label>سعر الفئة "العادية" (شهريًا، د.ع)</label>
+        <input id="standardPrice" type="number" step="1000" value="${state.pricing.standard_price}">
+      </div>
+      <button class="btn btn-primary" onclick="adminSavePricing()">حفظ التسعير</button>
+    </div>
+
+    <h3 style="font-size:15px;">أثر التسعير على المطاعم الحالية</h3>
+    ${state.restaurants.map(r=>`
+      <div class="list-item row-between">
+        <span>${r.name} <span class="badge badge-${r.tier}">${tierLabel(r.tier)}</span></span>
+        <b>${fmtMoney(priceForTier(r.tier))}</b>
+      </div>
+    `).join('')}
+  </div>`;
+}
+function adminSavePricing(){
+  state.pricing.founding_price = Number(document.getElementById('foundingPrice').value)||0;
+  state.pricing.standard_price = Number(document.getElementById('standardPrice').value)||0;
+  toastMsg('تم تحديث التسعير لكل المطاعم');
+  render();
+}
+
+function adminAnalyticsTab(activeCount, totalBookings, totalNoshow, noshowRate, revenue){
+  const foundingCount = state.restaurants.filter(r=>r.tier==='founding').length;
+  const standardCount = state.restaurants.filter(r=>r.tier==='standard').length;
+  const confirmedCount = state.bookings.filter(b=>b.status==='confirmed').length;
+  const restrictedCustomers = Object.values(state.reliability).filter(r=>r.is_restricted).length;
+  return `
+  <div class="stack">
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-num">${state.restaurants.length}</div><div class="stat-label">إجمالي المطاعم</div></div>
+      <div class="stat-card"><div class="stat-num">${activeCount}</div><div class="stat-label">مطاعم مفعّلة</div></div>
+      <div class="stat-card"><div class="stat-num">${totalBookings}</div><div class="stat-label">إجمالي الحجوزات</div></div>
+      <div class="stat-card"><div class="stat-num">${noshowRate}%</div><div class="stat-label">نسبة عدم الحضور</div></div>
+    </div>
+    <div class="list-item stack">
+      <div class="row-between"><span class="muted">مطاعم فئة مؤسِّس</span><b>${foundingCount}</b></div>
+      <div class="row-between"><span class="muted">مطاعم فئة عادية</span><b>${standardCount}</b></div>
+      <div class="row-between"><span class="muted">حجوزات مؤكدة</span><b>${confirmedCount}</b></div>
+      <div class="row-between"><span class="muted">حجوزات لم يحضر أصحابها</span><b>${totalNoshow}</b></div>
+      <div class="row-between"><span class="muted">زبائن مقيّدون حاليًا</span><b>${restrictedCustomers}</b></div>
+      <div class="divider"></div>
+      <div class="row-between"><span class="muted">الإيراد الشهري المقدّر (مطاعم مفعّلة)</span><b style="color:var(--wine);">${fmtMoney(revenue)}</b></div>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   إشعارات صغيرة (toast مبسّط عبر alert بديل غير مزعج)
+   ============================================================ */
+function toastMsg(msg){
+  state.toast = msg;
+  // إظهار بسيط أعلى الشاشة لمدة قصيرة
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(()=>{ state.toast=null; },2500);
+  setTimeout(showToastBar,0);
+}
+function showToastBar(){
+  let bar = document.getElementById('toastBar');
+  if(bar) bar.remove();
+  if(!state.toast) return;
+  bar = document.createElement('div');
+  bar.id='toastBar';
+  bar.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 18px;border-radius:999px;font-size:13px;z-index:50;box-shadow:0 8px 20px rgba(0,0,0,.25);';
+  bar.textContent = state.toast;
+  document.body.appendChild(bar);
+  setTimeout(()=>{ if(bar) bar.remove(); }, 2400);
+}
+
+/* ============================================================
+   بدء التشغيل
+   ============================================================ */
+render();
+</script>
+</body>
+</html>
