@@ -1,0 +1,146 @@
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. جدول أسعار المنصة المركزية
+CREATE TABLE pricing_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  founding_price INTEGER NOT NULL DEFAULT 60000, -- 60,000 د.ع
+  standard_price INTEGER NOT NULL DEFAULT 85000, -- 85,000 د.ع
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- أدخل الأسعار الافتراضية
+INSERT INTO pricing_settings (founding_price, standard_price) VALUES (60000, 85000);
+
+-- 2. جدول المطاعم
+CREATE TYPE restaurant_tier AS ENUM ('founding', 'standard');
+
+CREATE TABLE restaurants (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  tier restaurant_tier NOT NULL DEFAULT 'standard',
+  phone TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 3. جدول حسابات أصحاب المطاعم
+CREATE TABLE restaurant_users (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE, -- مربوط بـ Supabase Auth
+  email TEXT UNIQUE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 4. جدول الزبائن (تسجيل إجباري برقم الهاتف)
+CREATE TABLE customer_users (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  phone TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  phone_verified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. سجل موثوقية الزبون
+CREATE TABLE customer_reliability (
+  customer_id UUID PRIMARY KEY REFERENCES customer_users(id) ON DELETE CASCADE,
+  total_bookings INTEGER DEFAULT 0,
+  total_noshows INTEGER DEFAULT 0,
+  is_restricted BOOLEAN DEFAULT FALSE,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 6. جدول الحجوزات
+CREATE TYPE booking_status AS ENUM ('pending', 'confirmed', 'noshow', 'cancelled');
+
+CREATE TABLE bookings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  code TEXT UNIQUE NOT NULL, -- مثلاً "B-4821"
+  restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
+  customer_id UUID REFERENCES customer_users(id) ON DELETE CASCADE,
+  booking_date DATE NOT NULL,
+  booking_time TIME NOT NULL,
+  party_size INTEGER NOT NULL CHECK (party_size > 0),
+  status booking_status DEFAULT 'pending',
+  reminder_sent_at TIMESTAMP WITH TIME ZONE,
+  confirmed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- -------------------------------------------------------
+-- تفعيل عزل البيانات والمحافظة على أمان المنصة (Row Level Security)
+-- -------------------------------------------------------
+ALTER TABLE restaurants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE restaurant_users ENABLE ROW LEVEL SECURITY;
+
+-- الزبون يشاهد المطاعم النشطة فقط
+CREATE POLICY "Public Active Restaurants" ON restaurants 
+  FOR SELECT USING (is_active = true);
+
+-- صاحب المطعم يشاهد ويعدّل حجوزات مطعمه فقط حصراً
+CREATE POLICY "Restaurant Owner Access Bookings" ON bookings
+  FOR ALL USING (
+    restaurant_id IN (
+      SELECT restaurant_id FROM restaurant_users WHERE user_id = auth.uid()
+    )
+  );
+import { createClient } from '@supabase/supabase-js'
+
+// كود إرسال رسائل الواتساب للتذكير قبل ساعة
+export async function sendOneHourWhatsAppReminders() {
+  const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!)
+  
+  const now = new Date()
+  const targetStartTime = new Date(now.getTime() + 55 * 60 * 1000).toTimeString().split(' ')[0]
+  const targetEndTime = new Date(now.getTime() + 65 * 60 * 1000).toTimeString().split(' ')[0]
+  const todayDate = now.toISOString().split('T')[0]
+
+  // جلب الحجوزات القادمة بعد 60 دقيقة والتي لم يُرسل لها تذكير بعد
+  const { data: pendingBookings } = await supabase
+    .from('bookings')
+    .select('*, customer_users(phone, name), restaurants(name)')
+    .eq('booking_date', todayDate)
+    .gte('booking_time', targetStartTime)
+    .lte('booking_time', targetEndTime)
+    .is('reminder_sent_at', null)
+    .eq('status', 'pending')
+
+  for (const booking of pendingBookings || []) {
+    const customerPhone = booking.customer_users.phone
+    const restaurantName = booking.restaurants.name
+    
+    // إرسال رسالة الواتساب عبر WhatsApp Cloud API
+    const response = await fetch(`https://graph.facebook.com/v18.0/${process.env.WA_PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.WA_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: customerPhone,
+        type: "template",
+        template: {
+          name: "booking_reminder_1h",
+          language: { code: "ar" },
+          components: [{
+            type: "body",
+            parameters: [
+              { type: "text", text: booking.customer_users.name },
+              { type: "text", text: restaurantName },
+              { type: "text", text: booking.booking_time },
+              { type: "text", text: booking.code }
+            ]
+          }]
+        }
+      })
+    })
+
+    if (response.ok) {
+      // تحديث وقت إرسال التذكير لعدم تكراره
+      await supabase.from('bookings').update({ reminder_sent_at: new Date().toISOString() }).eq('id', booking.id)
+    }
+  }
+}
